@@ -1,0 +1,74 @@
+private void addLog(String msg) {
+	    SwingUtilities.invokeLater(() -> {
+	        try {
+	            Document doc = textPane.getDocument();
+	            doc.insertString(doc.getLength(), msg + "\n", null);
+	        } catch (Exception e) {
+	            e.printStackTrace();
+	        }
+	    });
+	}
+
+
+ScheduledExecutorService logScheduler = Executors.newSingleThreadScheduledExecutor();
+		logScheduler.scheduleAtFixedRate(() -> {
+			for (ControlCard card : allCards) {
+				ControlCardSocketHandler handler = cardHandlers.get(card.id);
+				List<JToggleButton> toggles = toggleMap.get(card.id);
+
+				if (handler != null && handler.isConnected()) {
+					HardwareData data = handler.getLastData();
+					if (data != null && data.paOn && toggles != null) {
+						for (int i = 0; i < card.modules.size(); i++) {
+							Module m = card.modules.get(i);
+							JToggleButton toggleButton = toggles.get(i);
+
+							if (toggleButton.isSelected()) {
+
+								String time = LocalDateTime.now()
+										.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+
+								String log = time + "Band: " + m.name + "| VSWR: " + data.vswr + "| TEMP: " + data.temp
+										+ "| FWD: " + data.fwd + "|RFL: " + data.rfl;
+								addLog(log);
+							}
+						}
+					}
+				}
+			}
+
+		}, 0, 5, TimeUnit.SECONDS);
+
+JButton btnNewButton = new JButton("Save");
+		btnNewButton.addActionListener(e -> {
+			try {
+				String time = java.time.LocalDateTime.now()
+						.format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
+
+				String fileName = "PA_Log_" + time + ".txt";
+				JFileChooser chooser = new JFileChooser();
+				chooser.setSelectedFile(new File(fileName));
+
+				if (chooser.showSaveDialog(null) == JFileChooser.APPROVE_OPTION) {
+					File file = chooser.getSelectedFile();
+
+					if (!file.getName().endsWith(".txt")) {
+						file = new File(file.getAbsolutePath() + ".txt");
+					}
+					String content = textPane.getText();
+
+					Files.write(file.toPath(), content.getBytes());
+
+					JOptionPane.showMessageDialog(null, "File saved: " + file.getName());
+
+				}
+			} catch (Exception ex) {
+				ex.printStackTrace();
+			}
+		});
+		panel_5.add(btnNewButton);
+		
+		    private volatile HardwareData lastData;
+    public HardwareData getLastData() {
+        return lastData;
+    }        this.lastData = data; handleFrame
