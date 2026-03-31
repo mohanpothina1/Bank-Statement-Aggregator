@@ -1,0 +1,421 @@
+package modcontrol.net;
+
+import java.awt.Color;
+import java.io.OutputStream;
+import java.net.InetSocketAddress;
+import java.net.Socket;
+import java.util.ArrayList;
+
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
+
+import javax.swing.JCheckBox;
+import javax.swing.SwingUtilities;
+
+import modcontrol.model.HardwareData;
+import modcontrol.ui.ColoredBoxIcon;
+import modcontrol.ui.IPAddress;
+
+public class ControlCardSocketHandler implements Runnable {
+
+	private final String ip;
+	private final int port;
+	private volatile HardwareData lastData;
+	private final byte[] statusCommand; // sending cmd
+	private Thread senderThread;
+
+	private final Consumer<Boolean> statusCallback; // one action changes
+	private final Consumer<HardwareData> dataCallback;
+
+	private final ArrayBlockingQueue<byte[]> sendQueue; // thread-safe
+
+	private volatile boolean running = true; // main loop
+	private final AtomicBoolean connected = new AtomicBoolean(false); // thread-safe
+
+	private Socket socket; // connection object
+	private OutputStream out; // sending the data
+
+	private ScheduledExecutorService scheduler;
+	private TCPReceive receiver; // receiver object
+
+	private ArrayList<JCheckBox> lans; // stores the checkboxes
+	private boolean pingStarted = false;
+	public ControlCardSocketHandler(String ip, int port, byte[] statusCommand, Consumer<Boolean> statusCallback,
+			Consumer<HardwareData> dataCallback) {
+
+		this.ip = ip;
+		this.port = port;
+		this.statusCommand = statusCommand;
+		this.statusCallback = statusCallback;
+		this.dataCallback = dataCallback;
+		this.sendQueue = new ArrayBlockingQueue<>(100);
+	}
+
+	public void enqueueCommand(byte[] command) {
+//        sendQueue.offer(command);
+		if (command != null && connected.get()) {
+			sendQueue.offer(command);
+		}
+	}
+
+	public HardwareData getLastData() {
+		return lastData;
+	}
+
+	public boolean isConnected() {
+		return connected.get();
+	}
+
+	public void shutdown() {
+		running = false;
+		closeSocket();
+	}
+
+	public void start() {
+		new Thread(this).start();
+	} // creates new thread and executes run method inside
+
+	@Override
+	public void run() {
+
+		boolean lastStatus = false;
+		
+		if(!pingStarted) {
+			startPingChecker();
+			pingStarted = true;
+		}
+
+		while (running) {
+
+			try {
+
+				socket = new Socket();
+
+				socket.connect(new InetSocketAddress(ip, port), 2000);
+				System.out.println("TCP Connection Started!");
+
+				out = socket.getOutputStream();
+
+				connected.set(true);
+				System.out.println("Connected to " + ip + ":" + port);
+
+//				if (!lastStatus && statusCallback != null) {
+//					statusCallback.accept(true);
+//					lastStatus = true;
+//				}
+
+				if(statusCallback != null) {
+					statusCallback.accept(true);
+				}
+				updateLanStatus(true);
+				startReceiver();
+				startSender();
+				startAutoPolling();
+
+				while (running && socket != null && !socket.isClosed()) {
+					
+					if(!IPAddress.tester(ip)) {
+						System.out.println("Ping lost");
+						break;
+					}
+					Thread.sleep(200);
+				}
+
+			} catch (Exception e) {
+
+				System.out.println("Connection failed for: " + ip + ":" + port);
+				connected.set(false);
+
+				System.out.println("Calling statusCallback(false)...");
+
+				if (statusCallback != null) {
+					statusCallback.accept(false);
+				} 
+				updateLanStatus(false);
+				closeSocket();
+
+				try {
+					Thread.sleep(2000);
+				} catch (InterruptedException ignored) {
+				}
+			}
+		}
+	}
+
+	private void startReceiver() {
+		receiver = new TCPReceive(socket, this::handleFrame);
+		receiver.start();
+	}// start receiver thread
+
+	private void startAutoPolling() {
+		scheduler = Executors.newSingleThreadScheduledExecutor();
+
+		scheduler.scheduleAtFixedRate(() -> {
+			if (connected.get() && statusCommand != null) {
+				enqueueCommand(statusCommand);
+			}
+		}, 0, 1, TimeUnit.SECONDS);
+	}
+
+	private void handleFrame(byte[] frame) {
+
+		if (!verifyXor(frame)) {
+			System.out.println("XOR failed" + bytesToHex(frame));
+			return;
+		}
+
+		HardwareData data = parseFrame(frame);
+		this.lastData = data;
+
+		if (dataCallback != null) {
+			dataCallback.accept(data);
+		}
+
+		System.out.println("VSWR: " + data.vswr + " TEMP: " + data.temp + " FWD: " + data.fwd + " RFL: " + data.rfl);
+	}
+
+	private HardwareData parseFrame(byte[] frame) {
+
+		HardwareData data = new HardwareData();
+		data.paOn = false;
+
+		int i = 0;
+
+		while (i < frame.length) {
+
+			int id = frame[i] & 0xFF;
+
+			if (id == 0xF1) { // FWD Power
+				data.fwd = frame[i + 2] & 0xFF;
+				if (data.fwd > 0)
+					data.paOn = true;
+				i += 3;
+			} else if (id == 0xF2) { // RFL Power
+				data.rfl = frame[i + 2] & 0xFF;
+				i += 3;
+			} else if (id == 0x20) { // Temperature
+				data.temp = ((frame[i + 2] & 0xFF) << 8) | (frame[i + 3] & 0xFF);
+				i += 4;
+			} else if (id == 0x21) { // VSWR
+				int raw = ((frame[i + 2] & 0xFF) << 8) | (frame[i + 3] & 0xFF);
+				data.vswr = raw / 10.0;
+
+				i += 4;
+			} else {
+				i++;
+			}
+		}
+
+		return data;
+	}
+
+	private boolean verifyXor(byte[] frame) {
+		// calculates xor
+		if (frame.length < 3)
+			return false;
+
+		int xor = 0;
+
+		for (int i = 0; i < frame.length - 2; i++) {
+			xor ^= frame[i];
+		}
+
+		return xor == (frame[frame.length - 2] & 0xFF);
+	}
+
+	private void closeSocket() {
+		// shutdown the socket
+		connected.set(false);
+
+		try {
+			if (scheduler != null && !scheduler.isShutdown())
+				scheduler.shutdownNow();
+		} catch (Exception ignored) {
+		}
+
+		try {
+			if (socket != null)
+				socket.close();
+		} catch (Exception ignored) {
+		}
+	}
+
+	public void setLans(ArrayList<JCheckBox> lans) {
+		this.lans = lans; // stores lan
+	}
+
+	private void startSender() {
+
+		senderThread = new Thread(() -> {
+			try {
+				while (running && socket != null && !socket.isClosed()) {
+
+					byte[] cmd = sendQueue.take(); // waits for command
+
+					if (out != null) {
+						out.write(cmd);
+						out.flush();
+
+						// Debug (remove later)
+						System.out.println("Sent: " + bytesToHex(cmd));
+					}
+				}
+			} catch (Exception e) {
+				System.out.println("Sender stopped.");
+			}
+		});
+
+		senderThread.start();
+	}
+
+	private String bytesToHex(byte[] bytes) {
+		StringBuilder sb = new StringBuilder();
+		for (byte b : bytes)
+			sb.append(String.format("%02X ", b));
+		return sb.toString();
+	}
+
+	private void startPingChecker() {
+
+		javax.swing.Timer t = new javax.swing.Timer(1000, e -> {
+
+			new Thread(() -> {
+
+				boolean reachable = IPAddress.tester(ip);
+				System.out.println("PING " + ip + "=" + reachable);
+
+				SwingUtilities.invokeLater(() -> {
+
+					// update LAN UI
+					if (lans != null) {
+						for (JCheckBox box : lans) {
+							box.setIcon(new ColoredBoxIcon(reachable ? Color.GREEN : Color.RED));
+						}
+					}
+
+					// IMPORTANT: if ping lost → force disconnect
+					 // 🔥 CRITICAL FIX
+	                if (!reachable && connected.get()) {
+
+	                        System.out.println("Ping lost → forcing disconnect");
+
+	                        connected.set(false);
+
+	                        if (statusCallback != null) {
+	                            statusCallback.accept(false);
+	                        }
+
+	                        closeSocket();
+	                    }
+	             
+
+	
+
+				});
+
+			}).start();
+
+		});
+
+		t.start();
+	}
+
+	private boolean checkPing() {
+		return IPAddress.tester(ip); // your existing ping method
+	}
+
+	public void updateLanStatus(boolean connected) { // this updates lan
+		if (lans == null) {
+			SwingUtilities.invokeLater(() -> {
+				for (JCheckBox lanBox : lans) {
+					lanBox.setIcon(new ColoredBoxIcon(connected ? Color.GREEN : Color.RED));
+					lanBox.setOpaque(true);
+					lanBox.setSelected(connected);
+					lanBox.revalidate();
+					lanBox.repaint();
+				}
+			});
+		}
+	}
+
+}
+
+try {
+			InetAddress inet = InetAddress.getByName(ip);
+
+			// timeout = 800ms (fast)
+			return inet.isReachable(800);
+
+		} catch (Exception e) {
+			return false;
+		}
+	}
+	public class TCPReceive extends Thread {
+
+    private final Socket socket; //connection object
+    private final Consumer<byte[]> frameCallback;
+
+    public TCPReceive(Socket socket, Consumer<byte[]> frameCallback) {
+        this.socket = socket;
+        this.frameCallback = frameCallback;
+    }
+
+    @Override
+    public void run() {
+        try {
+        	socket.setSoTimeout(2000);
+            InputStream in = socket.getInputStream();
+
+            while (!socket.isClosed()) {
+            	try {
+                byte[] frame = readFrame(in);
+
+                if (frame != null && frameCallback != null) {
+                    frameCallback.accept(frame);
+                }
+            }catch (SocketTimeoutException e) {
+				// TODO: handle exception
+			}
+            	}
+
+        } catch (Exception e) {
+            System.out.println("Receiver stopped.");
+        }
+    }
+
+    private byte[] readFrame(InputStream in) throws IOException {
+
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+
+        int b;
+        
+        int count = 0;
+        
+
+        // Wait for frame start (0x5A)
+        while ((b = in.read()) != -1) {
+            if (b == 0x5A) {
+                buffer.write(b);
+                break;
+            }
+        if(++count>1024) return null;
+        }
+
+        if (b == -1) return null;
+
+        // Read until frame end (0xA5)
+        while ((b = in.read()) != -1) {
+            buffer.write(b);
+            if (b == 0xA5) {
+                break;
+            }
+            if(buffer.size()>2048) return null;
+        }
+
+        return buffer.toByteArray();
+    }
+}
