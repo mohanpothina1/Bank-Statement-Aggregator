@@ -1,0 +1,112 @@
+public class MainWindow extends JFrame {
+
+    public MainWindow() {
+        setTitle("Configuration UI");
+        setSize(500, 400);
+        setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+
+        JTabbedPane tabbedPane = new JTabbedPane();
+
+        tabbedPane.add("Entity", EntityPanel.getInstance());
+        tabbedPane.add("Backup", BackupPanel.getInstance());
+        tabbedPane.add("Database Config", DatabaseConfigPanel.getInstance());
+        tabbedPane.add("ESM Tasking", ESMTaskingPanel.getInstance());
+
+        add(tabbedPane);
+        setVisible(true);
+    }
+
+    public static void main(String[] args) {
+        new MainWindow();
+    }
+}
+
+public class EntityPanel extends JPanel {
+
+    private static EntityPanel instance;
+
+    private EntityPanel() {
+
+        setLayout(new BorderLayout());
+
+        JPanel mainPanel = new JPanel(new GridBagLayout());
+        GridBagConstraints gbcMain = new GridBagConstraints();
+
+        gbcMain.gridx = 0;
+        gbcMain.weightx = 1.0;
+        gbcMain.fill = GridBagConstraints.HORIZONTAL;
+        gbcMain.insets = new Insets(10, 10, 10, 10);
+
+        // 🔹 Create 4 groups
+        for (int i = 1; i <= 4; i++) {
+
+            JPanel groupPanel = createServerGroup(
+                    "Server Group " + i,
+                    "Primary Server-" + i,
+                    "Secondary Server-" + i
+            );
+
+            gbcMain.gridy = i - 1;
+            gbcMain.weighty = 0; // important
+            mainPanel.add(groupPanel, gbcMain);
+        }
+
+        // 🔹 Push everything to TOP (fix center issue)
+        gbcMain.gridy = 5;
+        gbcMain.weighty = 1;
+        mainPanel.add(Box.createVerticalGlue(), gbcMain);
+
+        add(new JScrollPane(mainPanel), BorderLayout.CENTER);
+    }
+
+    private JPanel createServerGroup(String title, String primary, String secondary) {
+
+        JPanel panel = new JPanel(new GridBagLayout());
+
+        // 🔥 Border + Padding
+        panel.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createTitledBorder(title),
+                BorderFactory.createEmptyBorder(10, 15, 10, 15)
+        ));
+
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.insets = new Insets(8, 10, 8, 10);
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        gbc.anchor = GridBagConstraints.WEST;
+
+        // 🔹 Primary Row
+        gbc.gridx = 0;
+        gbc.gridy = 0;
+        panel.add(new JLabel(primary), gbc);
+
+        gbc.gridx = 1;
+        gbc.weightx = 1.0; // expand IP field
+        panel.add(new JTextField(20), gbc);
+
+        gbc.gridx = 2;
+        gbc.weightx = 0;
+        panel.add(new JTextField(8), gbc);
+
+        // 🔹 Secondary Row
+        gbc.gridx = 0;
+        gbc.gridy = 1;
+        panel.add(new JLabel(secondary), gbc);
+
+        gbc.gridx = 1;
+        gbc.weightx = 1.0;
+        panel.add(new JTextField(20), gbc);
+
+        gbc.gridx = 2;
+        gbc.weightx = 0;
+        panel.add(new JTextField(8), gbc);
+
+        return panel;
+    }
+
+    public static EntityPanel getInstance() {
+        if (instance == null) {
+            instance = new EntityPanel();
+        }
+        return instance;
+    }
+}
