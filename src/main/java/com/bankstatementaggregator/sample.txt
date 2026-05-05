@@ -302,3 +302,44 @@ public class ControlCardSocketHandler implements Runnable {
 	}
 
 }
+✅ *While you are upgrading in Spring Boot & Microservice, consider preparing in below areas:*
+
+* *Spring Boot Fundamentals* : Auto-configuration, Starter dependencies, Embedded servers, Spring Boot annotations, Configuration properties, Profiles
+* *Spring Core: Dependency Injection* , Inversion of Control, Bean lifecycle, ApplicationContext
+* *REST API Development* : REST controllers, Request/Response mapping, Validation, Exception handling, API design
+* *Data Access* : Spring Data JPA, Hibernate, Entity mapping, CRUD operations, Transactions
+* *Security* : Spring Security, Authentication, Authorization, JWT, OAuth 2.0
+* *Testing* : JUnit, Mockito, Unit testing, Integration testing, API testing
+* *Monitoring & Logging* : Spring Boot Actuator, Health checks, Metrics, Logging
+* *Build Tools* : Maven, Gradle, Dependency management
+* *Microservices* : Microservices architecture, Service discovery, API Gateway, Inter-service communication
+* *Caching & Performance* : Caching, Redis, Performance tuning
+* *Messaging & Async* : Apache Kafka, RabbitMQ, Asynchronous processing
+* *DevOps & Deployment* : Docker, CI/CD, Cloud deployment, Amazon Web Services
+
+Technical Learning for today
+*Topic: Global Exception Handling & Production Error Design*
+Team, for every project, error handling is mandatory. What error response your APIs will return, and how to technically implement. These are essential concepts.
+
+*Below are key points which aligns with this:*
+✅ for every error, resturn standard Error response → 
+• errorCode
+• errorMessage
+→ Avoid exposing stack traces to clients
+
+✅ Exception handling architecture →
+• Throw custom unchecked exception (RuntimeException)
+• Handle via @RestControllerAdvice + @ExceptionHandler
+→ Centralized error handling across services
+
+✅ Custom exception structure → Must carry
+• errorCode
+• errorMessage
+• HttpStatus
+→ Known at the point of failure (throw location)
+
+✅ Generic fallback handling →
+Add handler for Exception.class → ensures consistent response for unknown errors (5xx)
+
+✅ Production readiness principle →
+Generic errors = missed handling → investigate logs → convert into specific custom exceptions (4xx/5xx)
